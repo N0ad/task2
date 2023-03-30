@@ -10,43 +10,45 @@ using namespace std;
 int max_iterations;
 double max_err;
 int size_arr;
-double arr[1024][1024];
-double new_arr[1024][1024];
 
 int main(int argc, char *argv[]) {
     max_err = atof(argv[argc - 3]);
     size_arr = stoi(argv[argc - 2]);
     max_iterations = stoi(argv[argc - 1]);
-    #pragma acc enter data create(arr[0:1024][0:1024], new_arr[0:1024][0:1024])
+
+    double *arr{new double[size_arr * size_arr]{}};
+    double *new_arr{new double[size_arr * size_arr]{}};
+
+    #pragma acc enter data create(arr[0:size_arr * size_arr], new_arr[0:size_arr * size_arr])
 
     auto start = chrono::high_resolution_clock::now();
 
-    arr[0][0] = 10;
-    arr[0][size_arr - 1] = 20;
-    arr[size_arr - 1][0] = 20;
-    arr[size_arr - 1][size_arr - 1] = 30;
-    new_arr[0][0] = 10;
-    new_arr[0][size_arr - 1] = 20;
-    new_arr[size_arr - 1][0] = 20;
-    new_arr[size_arr - 1][size_arr - 1] = 30;
+    arr[0] = 10;
+    arr[size_arr - 1] = 20;
+    arr[(size_arr - 1) * size_arr] = 20;
+    arr[size_arr * size_arr - 1] = 30;
+    new_arr[0] = 10;
+    new_arr[size_arr - 1] = 20;
+    new_arr[(size_arr - 1) * size_arr] = 20;
+    new_arr[size_arr * size_arr - 1] = 30;
     double step = 10.0 / (size_arr - 1);
 
-    #pragma acc parallel loop present(arr[0:1024][0:1024], new_arr[0:1024][0:1024])
+    #pragma acc parallel loop present(arr[0:size_arr * size_arr], new_arr[0:size_arr * size_arr])
     for (int i = 1; i < size_arr - 1; i++) {
-        arr[0][i] = 10 + i * step;
-        arr[size_arr - 1][i] = 20 + i * step;
-        arr[i][0] = 10 + i * step;
-        arr[i][size_arr - 1] = 20 + i * step;
-        new_arr[0][i] = 10 + i * step;
-        new_arr[size_arr - 1][i] = 20 + i * step;
-        new_arr[i][0] = 10 + i * step;
-        new_arr[i][size_arr - 1] = 20 + i * step;
+        arr[i] = 10 + i * step;
+        arr[(size_arr - 1) * size_arr + i] = 20 + i * step;
+        arr[i * size_arr] = 10 + i * step;
+        arr[i * size_arr + size_arr - 1] = 20 + i * step;
+        new_arr[i] = 10 + i * step;
+        new_arr[(size_arr - 1) * size_arr + i] = 20 + i * step;
+        new_arr[i * size_arr] = 10 + i * step;
+        new_arr[i * size_arr + size_arr - 1] = 20 + i * step;
     }
-    #pragma acc parallel loop present(arr[0:1024][0:1024], new_arr[0:1024][0:1024])
+    #pragma acc parallel loop present(arr[0:size_arr * size_arr], new_arr[0:size_arr * size_arr])
     for (int i = 1; i < size_arr - 1; i++) {
         for (int j = 1; j < size_arr - 1; j++) {
-            arr[i][j] = 0;
-            new_arr[i][j] = 0;
+            arr[i * size_arr + j] = 0;
+            new_arr[i * size_arr + j] = 0;
         }
     }
 
@@ -57,26 +59,26 @@ int main(int argc, char *argv[]) {
     int iterations = 0;
     double err = 1;
     double* swap;
-    double* a = &arr[0][0];
-    double* na = &new_arr[0][0];
+    double* a = arr;
+    double* na = new_arr;
 
     auto nstart = chrono::high_resolution_clock::now();
-    #pragma acc enter data copyin(a[:1024][:1024], na[:1024][:1024], err)
+    #pragma acc enter data copyin(a[0:size_arr * size_arr], na[0:size_arr * size_arr], err)
     while ((err > max_err) && (iterations < max_iterations))
     {
         iterations++;
         #pragma acc parallel present(err)
         err = 0;
-        #pragma acc parallel loop collapse(2) present(a[:1024][:1024], na[:1024][:1024], err) reduction(max:err)
-        for (int i = 1; i < size_arr - 1; i++) {
-            for (int j = 1; j <= i; j++) {
-                *(na + i * size_arr + j) = (*(a + i * size_arr + j + 1) + *(a + i * size_arr + j - 1) + *(a + (i + 1) * size_arr + j)
-                 + *(a + (i - 1) * size_arr + j)) / 4;
-                 *(na + j * size_arr + i) = (*(a + j * size_arr + i + 1) + *(a + j * size_arr + i - 1) + *(a + (j + 1) * size_arr + i)
-                 + *(a + (j - 1) * size_arr + i)) / 4;
-                err = max(err, *(na + i * size_arr + j) - *(a + i * size_arr + j));
-                err = max(err, *(na + j * size_arr + i) - *(a + j * size_arr + i));
-            }
+        #pragma acc parallel loop collapse(1) present(a[0:size_arr * size_arr], na[0:size_arr * size_arr], err) reduction(max:err)
+        for (int i = 0; i < (size_arr - 2) * (size_arr - 2); i++) {
+            na[(i / (size_arr - 2) + 1) * size_arr + 1 + i % (size_arr - 2)] = (a[(i / (size_arr - 2) + 2) * size_arr + 1 + i % (size_arr - 2)] + a[(i / (size_arr - 2)) * size_arr + 1 + i % (size_arr - 2)] + a[(i / (size_arr - 2) + 1) * size_arr + 2 + i % (size_arr - 2)] + a[(i / (size_arr - 2) + 1) * size_arr + i % (size_arr - 2)]) / 4;
+            na[(i % (size_arr - 2) + 1) * size_arr + 1 + i / (size_arr - 2)] = na[(i / (size_arr - 2) + 1) * size_arr + 1 + i % (size_arr - 2)];
+            err = max(err, na[(i / (size_arr - 2) + 1) * size_arr + 1 + i % (size_arr - 2)] - a[(i / (size_arr - 2) + 1) * size_arr + 1 + i % (size_arr - 2)]);
+                // *(na + i * size_arr + j) = (*(a + i * size_arr + j + 1) + *(a + i * size_arr + j - 1) + *(a + (i + 1) * size_arr + j)
+                //  + *(a + (i - 1) * size_arr + j)) / 4;
+                //  *(na + j * size_arr + i) = (*(a + j * size_arr + i + 1) + *(a + j * size_arr + i - 1) + *(a + (j + 1) * size_arr + i)
+                //  + *(a + (j - 1) * size_arr + i)) / 4;
+                // err = max(err, *(na + i * size_arr + j) - *(a + i * size_arr + j));
         }
 
         swap = a;
@@ -84,13 +86,13 @@ int main(int argc, char *argv[]) {
         na = swap;
 
         #ifdef OPENACC__
-            acc_attach((void**)a);
-            acc_attach((void**)a);
+            acc_attach((void*)a);
+            acc_attach((void*)na);
         #endif
         #pragma acc update self(err) wait
     }
 
-    #pragma acc exit data delete(na[:1024][:1024]) copyout(a[:1024][:1024], err)
+    #pragma acc exit data delete(na[0:size_arr * size_arr]) copyout(a[0:size_arr * size_arr], err)
 
     auto nelapsed = chrono::high_resolution_clock::now() - nstart;
 	msec = chrono::duration_cast<chrono::microseconds>(nelapsed).count();
